@@ -1,0 +1,389 @@
+(function() {
+    /*******************************************************************************
+    **
+    ** Combined Script for Edge Browser Console Execution
+    **
+    ** This script performs the following actions:
+    ** - Locates and initializes the SCORM API.
+    ** - Sets the course status to "completed."
+    ** - Sets the session time to 5 minutes.
+    ** - Commits the changes and terminates the session.
+    ** - Disables 'validateCache' and 'updateContentLimit' functions in any scripts.
+    **
+    *******************************************************************************/
+
+    // SCORM API Wrapper Object
+    var SCORM_API = {
+        handle: null,
+        initialized: false,
+
+        // Locate the SCORM API
+        getAPIHandle: function() {
+            if (this.handle == null) {
+                this.handle = this.findAPI(window);
+            }
+            return this.handle;
+        },
+
+        // Recursive function to find the SCORM API in the window hierarchy
+        findAPI: function(win) {
+            var findAPITries = 0;
+            while ((win.API == null) && (win.API_1484_11 == null) && (win.parent != null) && (win.parent != win)) {
+                findAPITries++;
+                if (findAPITries > 500) {
+                    console.error("Error finding API -- too deeply nested.");
+                    return null;
+                }
+                win = win.parent;
+            }
+            return win.API || win.API_1484_11;
+        },
+
+        // Initialize communication with the LMS
+        initialize: function() {
+            var api = this.getAPIHandle();
+            if (api == null) {
+                console.error("Unable to locate the LMS's SCORM API Implementation.");
+                return false;
+            }
+
+            var result;
+            if (api.Initialize) {
+                // SCORM 2004
+                result = api.Initialize("");
+            } else if (api.LMSInitialize) {
+                // SCORM 1.2
+                result = api.LMSInitialize("");
+            }
+
+            var errorCode = this.getLastError();
+
+            if (result === "true" || result === true) {
+                this.initialized = true;
+                return true;
+            } else if (errorCode === "103") {
+                // Already initialized
+                console.warn("SCORM API is already initialized.");
+                this.initialized = true;
+                return true;
+            } else {
+                this.displayError();
+                return false;
+            }
+        },
+
+        // Set a value in the LMS
+        setValue: function(parameter, value) {
+            var api = this.getAPIHandle();
+            if (api == null || !this.initialized) {
+                console.error("SCORM API is not initialized.");
+                return false;
+            }
+
+            var result;
+            if (api.SetValue) {
+                // SCORM 2004
+                result = api.SetValue(parameter, value);
+            } else if (api.LMSSetValue) {
+                // SCORM 1.2
+                result = api.LMSSetValue(parameter, value);
+            }
+
+            if (result === "true" || result === true) {
+                return true;
+            } else {
+                this.displayError();
+                return false;
+            }
+        },
+
+        // Commit changes to the LMS
+        commit: function() {
+            var api = this.getAPIHandle();
+            if (api == null || !this.initialized) {
+                console.error("SCORM API is not initialized.");
+                return false;
+            }
+
+            var result;
+            if (api.Commit) {
+                // SCORM 2004
+                result = api.Commit("");
+            } else if (api.LMSCommit) {
+                // SCORM 1.2
+                result = api.LMSCommit("");
+            }
+
+            if (result === "true" || result === true) {
+                return true;
+            } else {
+                this.displayError();
+                return false;
+            }
+        },
+
+        // Terminate communication with the LMS
+        terminate: function() {
+            var api = this.getAPIHandle();
+            if (api == null || !this.initialized) {
+                console.error("SCORM API is not initialized.");
+                return false;
+            }
+
+            var result;
+            if (api.Terminate) {
+                // SCORM 2004
+                result = api.Terminate("");
+            } else if (api.LMSFinish) {
+                // SCORM 1.2
+                result = api.LMSFinish("");
+            }
+
+            var errorCode = this.getLastError();
+
+            if (result === "true" || result === true) {
+                this.initialized = false;
+                return true;
+            } else if (errorCode === "112") {
+                // Terminate after Terminate (SCORM 2004 error code for Termination after Termination)
+                console.warn("SCORM API is already terminated.");
+                this.initialized = false;
+                return true;
+            } else {
+                this.displayError();
+                return false;
+            }
+        },
+
+        // Get the last error code from the LMS
+        getLastError: function() {
+            var api = this.getAPIHandle();
+            if (api == null) {
+                console.error("SCORM API is not initialized.");
+                return "101"; // General Exception
+            }
+
+            var errorCode;
+            if (api.GetLastError) {
+                errorCode = api.GetLastError().toString();
+            } else if (api.LMSGetLastError) {
+                errorCode = api.LMSGetLastError().toString();
+            }
+            return errorCode;
+        },
+
+        // Display error information
+        displayError: function() {
+            var api = this.getAPIHandle();
+            if (api == null) {
+                console.error("Unable to locate the LMS's SCORM API Implementation.");
+                return;
+            }
+
+            var errorCode = this.getLastError();
+            var errorString = "";
+            var diagnostic = "";
+
+            if (api.GetErrorString) {
+                errorString = api.GetErrorString(errorCode);
+            } else if (api.LMSGetErrorString) {
+                errorString = api.LMSGetErrorString(errorCode);
+            }
+
+            if (api.GetDiagnostic) {
+                diagnostic = api.GetDiagnostic("");
+            } else if (api.LMSGetDiagnostic) {
+                diagnostic = api.LMSGetDiagnostic("");
+            }
+
+            console.error("SCORM Error - Code: " + errorCode + ", String: " + errorString + ", Diagnostic: " + diagnostic);
+        }
+    };
+
+    // Main execution function
+    function executeCourseCompletion() {
+        // Initialize SCORM API
+        if (!SCORM_API.initialize()) {
+            console.error("Failed to initialize SCORM API.");
+            return;
+        }
+
+        // Set course status to "completed"
+        var success = false;
+        if (SCORM_API.setValue("cmi.completion_status", "completed")) {
+            success = true;
+        } else if (SCORM_API.setValue("cmi.core.lesson_status", "completed")) {
+            success = true;
+        }
+
+        if (!success) {
+            console.error("Failed to set course completion status.");
+            SCORM_API.terminate();
+            return;
+        }
+
+        // Set the session time to 5 minutes
+        // SCORM 2004 format: 'PT5M0S'
+        SCORM_API.setValue("cmi.session_time", "PT5M0S");
+        // SCORM 1.2 format: '04:20:00'
+        SCORM_API.setValue("cmi.core.session_time", "00:05:00");
+
+        // Commit changes
+        if (!SCORM_API.commit()) {
+            console.error("Failed to commit changes to LMS.");
+            SCORM_API.terminate();
+            return;
+        }
+
+        // Terminate SCORM session
+        if (!SCORM_API.terminate()) {
+            console.error("Failed to terminate SCORM session.");
+            return;
+        }
+
+        console.log("Course marked as completed successfully. Session time set to 5 minutes.");
+    }
+
+    // Execute the course completion process
+    executeCourseCompletion();
+
+    /*******************************************************************************
+    **
+    ** Script to Disable 'validateCache' and 'updateContentLimit' Functions
+    **
+    ** This script modifies any scripts on the page that contain 'validateCache' and
+    ** 'updateContentLimit' functions, replacing their implementations to effectively
+    ** disable them.
+    **
+    *******************************************************************************/
+
+    // Function to modify the script content
+    function modifyScriptContent(scriptContent) {
+        let modifiedScript = scriptContent;
+        let functionsModified = false;
+
+        // Disable validateCache first
+        if (scriptContent.includes('function validateCache')) {
+            modifiedScript = modifiedScript.replace(
+                /function validateCache\s*\([\s\S]*?\)\s*\{[\s\S]*?\}/g,
+                'function validateCache() { console.log("validateCache overridden"); }'
+            );
+            functionsModified = true;
+        }
+
+        // Then disable updateContentLimit
+        if (scriptContent.includes('function updateContentLimit')) {
+            modifiedScript = modifiedScript.replace(
+                /function updateContentLimit\s*\([\s\S]*?\)\s*\{[\s\S]*?\}/g,
+                'function updateContentLimit() { console.log("updateContentLimit has been disabled."); }'
+            );
+            functionsModified = true;
+        }
+
+        return modifiedScript;
+    }
+
+    // Function to check if a script src is from an extension
+    function isExtensionScript(src) {
+        return src.startsWith('chrome-extension://') ||
+               src.startsWith('moz-extension://') ||
+               src.startsWith('safari-extension://') ||
+               src.startsWith('edge-extension://') ||
+               src.startsWith('chrome://') ||
+               src.startsWith('about:') ||
+               src.startsWith('data:') ||
+               src === '';
+    }
+
+    // Intercept scripts to modify them before execution
+    const observer = new MutationObserver((mutations) => {
+        mutations.forEach((mutation) => {
+            mutation.addedNodes.forEach((node) => {
+                if (node.tagName && node.tagName.toLowerCase() === 'script') {
+                    const scriptNode = node;
+
+                    // Skip scripts from extensions
+                    const src = scriptNode.src || '';
+                    if (isExtensionScript(src)) {
+                        return;
+                    }
+
+                    // Prevent the script from executing immediately
+                    scriptNode.type = 'javascript/blocked';
+
+                    if (scriptNode.src) {
+                        // External script
+                        // Fetch, modify, and inject the script
+                        fetch(scriptNode.src)
+                            .then(response => response.text())
+                            .then((scriptContent) => {
+                                const modifiedScript = modifyScriptContent(scriptContent);
+
+                                // Create a new script element
+                                const newScript = document.createElement('script');
+                                newScript.textContent = modifiedScript;
+                                // Copy the src attribute for debugging purposes (not necessary for execution)
+                                newScript.setAttribute('data-original-src', scriptNode.src);
+                                // Insert the modified script
+                                document.head.appendChild(newScript);
+
+                                if (modifiedScript !== scriptContent) {
+                                    console.log(`External script modified and injected: ${scriptNode.src}`);
+                                } else {
+                                    // Revert the type to allow execution
+                                    scriptNode.type = 'text/javascript';
+                                    console.log(`External script injected without modifications: ${scriptNode.src}`);
+                                }
+                            })
+                            .catch((error) => {
+                                console.error('Error fetching or modifying script:', error);
+                            });
+                    } else {
+                        // Inline script
+                        const scriptContent = scriptNode.textContent || scriptNode.innerText;
+                        const modifiedScript = modifyScriptContent(scriptContent);
+
+                        if (modifiedScript !== scriptContent) {
+                            // Replace the script with the modified content
+                            const newScript = document.createElement('script');
+                            newScript.textContent = modifiedScript;
+                            scriptNode.parentNode.replaceChild(newScript, scriptNode);
+                            console.log('Inline script modified and replaced.');
+                        } else {
+                            // No modifications; allow the script to execute
+                            scriptNode.type = 'text/javascript';
+                        }
+                    }
+                }
+            });
+        });
+    });
+
+    // Start observing the document for added scripts
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+
+    // Process existing scripts in the DOM before the observer starts
+    document.querySelectorAll('script').forEach((scriptNode) => {
+        const src = scriptNode.src || '';
+        if (isExtensionScript(src)) {
+            // Skip scripts from extensions
+            return;
+        }
+
+        const scriptContent = scriptNode.textContent || scriptNode.innerText || '';
+        const modifiedScript = modifyScriptContent(scriptContent);
+
+        if (modifiedScript !== scriptContent) {
+            // Prevent the original script from executing
+            scriptNode.type = 'javascript/blocked';
+
+            // Replace with modified script
+            const newScript = document.createElement('script');
+            newScript.textContent = modifiedScript;
+            scriptNode.parentNode.replaceChild(newScript, scriptNode);
+            console.log('Existing inline script modified and replaced.');
+        }
+    });
+
+    console.log('Script to disable validateCache and updateContentLimit is running.');
+})();
